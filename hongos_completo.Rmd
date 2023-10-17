@@ -1,0 +1,1067 @@
+---
+title: "fungi"
+author: "Karen Nuñez"
+date: "7/10/2020"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(readxl)
+library(phyloseq)
+library(ggplot2)
+library(gridExtra)
+library(reshape)
+library(ggpubr)
+library(gtools)
+library(circlize)
+library(Heatplus)
+library(ComplexHeatmap)
+library(metagMisc)
+require(tidyverse)
+library(ggthemes)
+library(edgeR)
+library(reshape)
+library(dplyr)
+library(hrbrthemes)
+library(vegan)
+library(EcolUtils)
+library(multcomp)
+library(DescTools)
+library(lsmeans)
+
+```
+
+## R Markdown
+
+This is an R Markdown document. Markdown is a simple formatting syntax for authoring HTML, PDF, and MS Word documents. For more details on using R Markdown see <http://rmarkdown.rstudio.com>.
+
+When you click the **Knit** button a document will be generated that includes both content as well as the output of any embedded R code chunks within the document. You can embed an R code chunk like this:
+
+```{r}
+#rm(list = ls())
+set.seed(12)
+datos_suelo <- read_excel("C:/Users/karen/Dropbox/Doctorado/Mapimi_bioinformatica_v2/datos_suelo.xlsx")
+suelo <- datos_suelo
+nombres_suelo <- suelo$ID
+suelo$ID <- NULL
+row.names(suelo) <- nombres_suelo
+suelo$Plant <- as.factor(suelo$Plant)
+suelo$Microhabitat <- as.factor((suelo$Microhabitat))
+str(suelo)
+# soil.cube <- lapply(suelo[,3:21], function(x)(sign(x) * abs(x)^(1/3)))
+# soil.cube <- as.data.frame(soil.cube)
+# factors <- (suelo[,c("Plant", "Microhabitat")])
+# soil.cube <- cbind(soil.cube, factors)
+row.names(soil.cube) <- nombres_suelo
+
+# env.dist = vegdist(decostand(suelo[,c(-1,-2)],"standardize"),"euclid")
+# suelo.sta = decostand(suelo[,c(-1,-2)], "standardize")
+# suelo.sta = cbind(suelo.sta, factors)
+
+load("C:/Users/karen/Dropbox/Doctorado/Mapimi_bioinformatica_v2/01_Map_v2_hongo.RData")
+```
+
+## Fungal composition
+
+```{r pressure, echo=FALSE}
+otu.fungi <- OTU
+tax.fungi <- TAX
+seq.fungi <- otu_seq_tab
+colnames(otu.fungi) <- nombres_suelo
+colnames(otu.fungi)
+
+otu_fungi = as.data.frame(otu.fungi)
+#write.csv(otu_fungi, file = "otu_fungi.cvs")
+tax_fungi = as.data.frame(tax.fungi)
+#write.csv(tax_fungi, file = "tax_fungi.cvs")
+
+# sample <- as.data.frame(soil.cube)
+# sample$Plant <- as.factor(sample$Plant)
+# sample$Microhabitat <- as.factor(sample$Microhabitat)
+# samples <- sample_data(sample)
+# rownames(samples)
+
+mapimi_fungi <- phyloseq(otu.fungi, tax.fungi, seq.fungi, samples)
+sample_sum_df <- data.frame(sum = sample_sums(mapimi_fungi))
+sample_sum_df
+
+mapimi_fun <- subset_taxa(mapimi_fungi, !is.na(Phylum) & !Phylum %in% c("", "uncharacterized"))
+mapimi_fun <- mapimi_fun %>%
+  subset_taxa(
+          Kingdom  != "k__Animalia" &
+            Kingdom != "k__Chromista" &
+            Phylum != "p__Arthropoda") 
+
+table(tax_table(mapimi_fun)[, "Phylum"])
+sample_sum_df2 <- data.frame(sum = sample_sums(mapimi_fun))
+#write.csv(sample_sum_df2, file = "fungi_c2.cvs")
+fun <- phyloseq_filter_sample_wise_abund_trim(mapimi_fun, minabund = 3)
+sample_sum_df1 <- data.frame(sum = sample_sums(fun))
+sample_sum_df1
+
+#write.csv(sample_sum_df1, file = "fungi_c1.cvs")
+
+
+```
+
+
+
+
+```{r pressure, echo=FALSE}
+set.seed(12)
+map_fun = rarefy_even_depth(fun, rngseed = F)
+sample_sum_df3 <- data.frame(sum = sample_sums(map_fun))
+#write.csv(sample_sum_df3, file = "fungi_c3.cvs")
+table(tax_table(map_fun)[, "Kingdom"])
+table(tax_table(map_fun)[, "Phylum"])
+
+
+prevelancedf = apply(X = otu_table(map_fun),
+                 MARGIN = 1,
+                 FUN = function(x){sum(x > 0)})
+# Add taxonomy and total read counts to this data.frame
+prevelancedf = data.frame(Prevalence = prevelancedf,
+                      TotalAbundance = taxa_sums(map_fun),
+                      tax_table(map_fun))
+prevelancedf[1:10,]
+
+prevelancedf_fungi_class = plyr::ddply(prevelancedf, "Class", function(df1){
+  data.frame(mean_prevalence=mean(df1$Prevalence),total_abundance=sum(df1$TotalAbundance,na.rm = T),stringsAsFactors = F)
+  })
+prevelancedf_fungi_phylum = plyr::ddply(prevelancedf, "Genus", function(df1){
+  data.frame(mean_prevalence=mean(df1$Prevalence),total_abundance=sum(df1$TotalAbundance,na.rm = T),stringsAsFactors = F)
+  })
+write.csv(prevelancedf_fungi_phylum, file = "prevelancedf_fungi_genus_rarefy.cvs")
+
+
+mapimi_clas_fun <- map_fun %>%
+  tax_glom(taxrank = "Class") %>%     # agglomerate at phylum level
+  transform_sample_counts(function(x) {x/sum(x)} ) %>% # Transform to rel. abundance
+  psmelt() %>%
+  filter (Abundance > 0.01) %>%
+       arrange(Class)
+
+table(mapimi_clas_fun["Class"])
+
+mapimi_gen_fun <- map_fun %>%
+  tax_glom(taxrank = "Genus") %>%                     
+  transform_sample_counts(function(x) {x/sum(x)} ) %>%  
+  psmelt() %>%
+  filter (Abundance > 0.02) %>%
+       arrange(Genus)
+
+str(mapimi_gen_fun)
+table(mapimi_gen_fun["Genus"])
+
+
+```
+
+## Fungi diversity
+
+```{r}
+a1<- ggplot(mapimi_clas_fun, aes(x = Plant, y = Abundance, fill = Class))
+
+class_colors <- c("#d676a0",
+"#002b7b",
+"#92ae00",
+"#c9853d",
+"#5ba958",
+"#70206e",
+"#7c91ec",
+"#00c4c9",
+"#e70012")
+
+fungi_barplot_class <- a1 + facet_grid(Microhabitat~.) +
+  geom_bar(stat = "identity", position = "fill", alpha = 0.9) +
+  scale_fill_manual(values = class_colors, labels = c("Agaricomycetes", "Dothideomycetes", "Eurotiomycetes", "Lecanoromycetes", "Orbiliomycetes", "Pezizomycetes", "Sordariomycetes", "Tremellomycetes", "Ustilaginomycetes")) +
+    scale_x_discrete(
+    labels = c("Pm", "Lt", "Pg", "Sa"),
+    drop = FALSE) +
+  scale_y_continuous(labels = function(x) paste0(x*100, "%")) +
+   theme_tufte() +
+  theme(axis.title.x = element_blank(),
+        axis.title.y = element_text(size = 10, face = "bold"), 
+        axis.text = element_text(size = 8, face = "bold"),
+        legend.position = "right", 
+        legend.title = element_blank(), 
+        legend.text = element_text(size = 12, 
+                                   face = "italic")) + 
+  guides(fill = guide_legend(reverse = F, keywidth = 1, keyheight = 1)) +
+  ylab("Relative Abundance (Class) \n")
+
+
+mapimi_phy_fun <- map_fun %>%
+  tax_glom(taxrank = "Phylum") %>%                     # agglomerate at phylum level
+  transform_sample_counts(function(x) {x/sum(x)} ) %>% # Transform to rel. abundance
+  psmelt() %>%
+    arrange(Phylum) 
+
+table(mapimi_phy_fun["Phylum"])
+
+a2<- ggplot(mapimi_phy_fun, aes(x = Plant, y = Abundance, fill = Phylum))
+
+phylum_colors_fun <- c("#72ac5c", "#7f64b9", "#b94b75", "#bb7438")
+
+fungi_barplot_phy <- a2 + facet_grid(Microhabitat~.) +
+  geom_bar(stat = "identity", position = "fill", alpha = 0.9) +
+  scale_fill_manual(values = phylum_colors_fun, labels = c("Ascomycota", "Basidiomycota", "Chytridiomycota", "Glomeromycota")) +
+    scale_x_discrete(
+    labels = c("Pm", "Lt", "Pg", "Sa"),
+    drop = FALSE) +
+  scale_y_continuous(labels = function(x) paste0(x*100, "%")) +
+   theme_tufte() +
+  theme(axis.title.x = element_blank(),
+        axis.title.y = element_text(size = 10, face = "bold"), 
+        axis.text = element_text(size = 8, face = "bold"),
+        legend.position = "right", 
+        legend.title = element_blank(), 
+        legend.text = element_text(size = 12, 
+                                   face = "italic")) + 
+  guides(fill = guide_legend(reverse = F, keywidth = 1, keyheight = 1)) +
+  ylab("Relative Abundance (Phylum) \n")
+
+
+alpha_diver_fun <- estimate_richness(map_fun)
+
+alpha_di_fungi <- cbind(alpha_diver_fun, factors)
+
+
+#Diversity
+
+shannon_aov <- aov(formula = Shannon ~ Plant * Microhabitat, data = alpha_di_fungi)
+summary(shannon_aov)
+shapiro.test(shannon_aov$residuals)
+pos_shannon <- PostHocTest(shannon_aov, method = "hsd", conf.level = 0.95)
+pos_shannon
+shannon_tuk <- lsmeans(shannon_aov,
+                       pairwise ~ Plant:Microhabitat,
+                       adjust="tukey")
+shannon_tuk.cld <- cld(shannon_tuk$lsmeans,
+    alpha=0.05,
+    type="response",      ### Show estimates in original scale
+    Letters=letters,      ### Use lower-case letters for .group
+    adjust="tukey")
+
+shannon_tuk.cld
+
+
+shannon_lm <- lm(formula = Shannon ~ Plant, data = alpha_di_fungi) 
+summary(shannon_lm)
+shapiro.test(shannon_lm$residuals)
+shannon_tuk_lm <- lsmeans(shannon_lm,
+                       pairwise ~ Plant,
+                       adjust="tukey")
+
+shannon_tuk.cld_lm <- cld(shannon_tuk_lm$lsmeans,
+    alpha=0.05,
+    type="response",      ### Show estimates in original scale
+    Letters=letters,      ### Use lower-case letters for .group
+    adjust="tukey")
+
+shannon_tuk.cld_lm
+#Observed
+
+obs_aov <- aov(formula = Chao1 ~ Plant, data = alpha_di_fungi)
+summary(obs_aov)
+shapiro.test(obs_aov$residuals)
+pos_obs <- PostHocTest(obs_aov, method = "hsd", conf.level = 0.95)
+obs_tuk <- lsmeans(obs_aov,
+                       pairwise ~ Plant,
+                       adjust="tukey")
+obs_tuk.cld <- cld(obs_tuk$lsmeans,
+    alpha=0.05,
+    type="response",      ### Show estimates in original scale
+    Letters=letters,      ### Use lower-case letters for .group
+    adjust="tukey")
+
+obs_tuk.cld
+
+obs_lm <- lm(formula = Observed ~ Plant / Microhabitat, data = alpha_di_fungi) 
+summary(obs_lm)
+shapiro.test(obs_lm$residuals)
+obs_tuk_lm <- lsmeans(obs_lm,
+                       pairwise ~ Plant:Microhabitat,
+                       adjust="tukey")
+
+obs_tuk.cld_lm <- cld(obs_tuk_lm$lsmeans,
+    alpha=0.05,
+    type="response",      ### Show estimates in original scale
+    Letters=letters,      ### Use lower-case letters for .group
+    adjust="tukey")
+
+obs_tuk.cld_lm 
+
+#write.csv(alpha_diver_fun, file = "diversidad_fungi.cvs")
+
+colrs <- c('#a6611a','#dfc27d','#80cdc1','#018571')
+
+observed_fungi <- ggplot(alpha_di_fungi, aes(x=Plant, y=Observed, fill=Plant)) + 
+  geom_boxplot(alpha = 0.6)+
+  scale_fill_manual(values=colrs) + 
+  theme_tufte() + 
+  theme(legend.position='none',
+        axis.title.x = element_blank(),
+        axis.text.x = element_blank(),
+        axis.title.y = element_text(size = 8, face = "bold")) +
+  #facet_wrap(Microhabitat ~. , scales= "fixed") +
+  ylab( "Observed ASVs") +
+  xlab("")
+
+
+shannon_fungi <- ggplot(alpha_di_fungi, aes(x=Plant, y=Shannon, fill=Plant)) + 
+  geom_boxplot(alpha = 0.6)+
+  scale_fill_manual(values=colrs) + 
+  theme_tufte() + 
+  theme(axis.title.x = element_text(size = 8, face = "bold"), 
+        axis.title.y = element_text(size = 8, face = "bold"),
+        legend.position='none',
+        strip.text.x =  element_blank()) +
+  facet_wrap( ~ Microhabitat, scales= "fixed") +
+  ylab( "Shannon Index") +
+  xlab("Vegetation")
+
+
+diver_fungi <- grid.arrange(observed_fungi, shannon_fungi,
+                            ncol = 1)
+
+#ggsave("diversidad_hongos_1.eps", plot=diver_fungi, dpi = 1200)
+
+
+fungal_composition <- grid.arrange(fungi_barplot_phy, fungi_barplot_class,
+                            ncol = 1)
+plot(fungal_composition)
+```
+
+## Fungi different relative abundance 
+
+```{r}
+
+#mapimi_fun
+
+otu.fun <- as(otu_table(mapimi_fun), "matrix") 
+otu.fun <- as.data.frame(otu.fun)
+
+tax.fun <- as(tax_table(mapimi_fun), "matrix") 
+tax.fun <- as.data.frame(tax.fun)
+tax.fun$otu <- row.names(tax.fun)
+seq.fun <-  as(tax_table(mapimi_fun), "matrix")
+seq.fun <-  as.data.frame(seq.fun)
+
+x <- otu.fun
+barplot(colSums(x), las=3)
+x <- x[rowSums(x>=1)>=8,]
+#
+x <- x[, colSums(x) > 0]
+
+barplot(colSums(x), las=3)
+boxplot(log(x+1), las=3)
+groups<- factor(sub("[0-9]", "", colnames(x)))
+
+y <- DGEList(counts=x,group=groups)
+y <- calcNormFactors(y)
+design <- model.matrix(~0+groups)
+colnames(design) <- sub("groups", "", colnames(design))
+y <- estimateDisp(y,design)
+plotBCV(y)
+fit <- glmFit(y,design)
+
+
+matrix.all <- makeContrasts(PmIvsPmP=PmI-PmP, 
+                         SaIvsSaP=SaI-SaP, 
+                         PmIvsSaI=PmI-SaI, 
+                         SaPvsPmP=SaP-PmP, 
+                         LtIvsLtP=LtI-LtP,  
+                         LtIvsPgI=LtI-PgI, 
+                         LtPvsPgP=LtP-PgP, 
+                         PgIvsPgP=PgI-PgP,
+                         PmvsSa=(PmI+PmP)-(SaI+SaP),
+                         PmvsPg=(PmI+PmP)-(PgI+PgP),
+                         PmvsLt=(PmI+PmP)-(LtI+LtP),
+                         LtvsPg=(LtI+LtP)-(PgI+PgP),
+                         LtvsSa=(LtI+LtP)-(SaI+SaP),
+                         PgvsSa=(PgI+PgP)-(SaI+SaP),
+                         all=(PmI+PmP+SaI+SaP)-(LtI+LtP+PgI+PgP),  levels=design)
+
+contrastes <- colnames(matrix.all)
+detab.all <- NULL
+for ( contraste in contrastes){
+  lrths <- glmLRT(fit, contrast=matrix.all[, contraste])
+  detabhs <- topTags(lrths, n = Inf)$table
+  head(detabhs)
+  detabhs$contraste <- contraste
+  plot(detabhs$logCPM, detabhs$logFC, col = ifelse(detabhs$FDR <= 0.1, "red", "gray"), main = contraste)
+  detab.all <- rbind(detab.all, detabhs)
+}
+head(detab.all)
+detab.all <- as.data.frame(detab.all) 
+hongos <- detab.all
+```
+
+
+```{r}
+hongos_nombre <- rownames(detab.all)
+hongos$otu <- hongos_nombre
+head(hongos)
+detab.all.otu <- merge(hongos, tax.fun, by = "otu")
+head(detab.all.otu)
+
+detab.all.otu$log_padj <- c(-log10(detab.all.otu$FDR))
+
+colnames(detab.all.otu)
+#write.csv(detab.all.otu, "detab_all_otu_fungi.cvs")
+
+detab.fungi.renamei <- detab.all.otu
+
+
+detab.fungi.hivshp <-subset(detab.fungi.renamei, contraste == "PmivsPmp")
+detab.fungi.hivssi <-subset(detab.fungi.renamei, contraste == "PmivsSai")
+detab.fungi.hpvssp <-subset(detab.fungi.renamei, contraste == "SapvsPmp")
+detab.fungi.livslp <-subset(detab.fungi.renamei, contraste == "LtivsLtp")
+detab.fungi.livspi <-subset(detab.fungi.renamei, contraste == "LtivsPgi")
+detab.fungi.pivspp <-subset(detab.fungi.renamei, contraste == "PgivsPgp")
+detab.fungi.HvsL <-subset(detab.fungi.renamei, contraste == "PmvsLt")
+detab.fungi.HvsP <-subset(detab.fungi.renamei, contraste == "PmvsPg")
+detab.fungi.HvsS <-subset(detab.fungi.renamei, contraste == "PmvsSa")
+detab.fungi.LvsS <-subset(detab.fungi.renamei, contraste == "LtvsSa")
+detab.fungi.LvsP <-subset(detab.fungi.renamei, contraste == "LtvsPg")
+detab.fungi.PvsS <-subset(detab.fungi.renamei, contraste == "PgvsSa")
+detab.fungi.all <-subset(detab.fungi.renamei, contraste == "all")
+
+```
+
+```{r}
+
+
+#detab.fungi.HvsL
+HvsL_plot <- ggplot(data=detab.fungi.HvsL, 
+            aes(x=logFC, y = interaction(Class, Order), 
+                col = interaction(Family, Genus))) +
+              geom_point(aes(size= log_padj)) +
+  xlab("log2 fold change") + ylab("Fungal Class") +
+  theme_few() +
+  theme(legend.position="right") +
+    ggtitle("Pleuraphis mutica vs Larrea tridentata")
+
+HvsL_plot
+ggsave(file = "HvsL_plot_fungi.pdf", 
+HvsL_plot, dpi =500)
+
+#detab.fungi.HvsP
+
+
+
+HvsP_plot <- ggplot(data=detab.fungi.HvsP, 
+            aes(x=logFC, y = interaction(Class, Order), 
+                col = interaction(Family, Genus))) +
+              geom_point(aes(size= log_padj)) +
+  xlab("log2FoldChange") + ylab("Fungal Class") +
+  #xlim(c(-10, 10)) +
+    theme_few() +
+  theme(legend.position="right") +
+    ggtitle("Pleuraphis mutica vs Prosopis glandulosa")
+
+HvsP_plot
+ggsave(file = "HvsP_plot_fungi.pdf", 
+HvsP_plot, dpi =500)
+
+#detab.fungi.HvsS
+
+
+HvsS_plot <- ggplot(data=detab.fungi.HvsS, 
+            aes(x=logFC,y = interaction(Class, Order), 
+                col = interaction(Family, Genus))) +
+              geom_point(aes(size= log_padj)) +
+  xlab("log2FoldChange") + ylab("Fungal class and order") +
+  theme_few() +
+  theme(legend.position="right", 
+        legend.title = element_text(size=12, face="bold")) +
+    ggtitle("Pleuraphis mutica vs Sporobolus airoides") +
+  
+
+
+HvsS_plot + scale_color_discrete(name="Family and genus")
+
+#ggsave(file = "HvsS_plot_fungi.pdf", 
+
+
+#detab.fungi.LvsS
+
+LvsS_plot <- ggplot(data=detab.fungi.LvsS, 
+            aes(x=logFC, y = interaction(Class, Order), 
+                col = interaction(Family, Genus))) +
+              geom_point(aes(size= log_padj)) +
+  xlab("log2 fold change") + ylab("Fungal Class") +
+  theme_few() +
+  theme(legend.position="right") +
+    ggtitle("Larrea tridentata vs Sporobolus airoides")
+
+LvsS_plot +  scale_color_discrete(name="Family and genus")
+
+#ggsave(file = "LvsS_plot_fungi.pdf", 
+LvsS_plot, dpi =500)
+
+#detab.fungi.LvsP
+
+
+LvsP_plot <- ggplot(data=detab.fungi.LvsP, 
+            aes(x=logFC, y = interaction(Class, Order), 
+                col = interaction(Family, Genus, Species))) +
+              geom_point(aes(size= log_padj)) +
+  xlab("log2 fold change") + ylab("Fungal class and order") +
+  theme_few() +
+  theme(legend.position="right",
+        legend.title = element_text(size=12, face="bold")) +
+    ggtitle("Larrea tridentata vs Prosopis glandulosa") 
+LvsP_plot + scale_color_discrete(name="Family and genus")
+
+ggsave(file = "LvsP_plot_fungi.pdf", 
+LvsP_plot, dpi =500)
+
+#detab.fungi.PvsS
+
+PvsS_plot <- ggplot(data=detab.fungi.PvsS, 
+            aes(x=logFC, y = interaction(Class, Order), 
+                col = interaction(Family, Genus))) +
+              geom_point(aes(size= log_padj)) +
+  xlab("log2 fold change") + ylab("Fungal Class") +
+  theme_few() +
+  theme(legend.position="right") +
+    ggtitle("Prosopis glandulosa vs Sporobolus airoides ")
+
+PvsS_plot
+
+ggsave(file = "PvsS_plot_fungi.pdf", 
+PvsS_plot, dpi =500)
+
+#detab.fungi.all
+
+all_plot <- ggplot(data=detab.fungi.all, 
+            aes(x=logFC, 
+                y = interaction(Order,Family), 
+                col = interaction(Genus,Species))) +
+              geom_point(aes(size= log_padj)) +
+  xlab("log2FoldChange") + ylab("Fungal order and family") +
+    theme_few() +
+  theme(legend.position="right") +
+    ggtitle("Grassland vs Shrubland: Pm+Sa vs Lt+Pg")
+
+all_plot
+
+ggsave(file = "all_plot_fungi.pdf", 
+all_plot, dpi =500)
+
+```
+
+```{r}
+detab.fungi.HvsS$threshold = as.factor(detab.fungi.HvsS$FDR < 0.05)
+
+pro_vs_spo_fun_plot <- ggplot(data=detab.fungi.HvsS,
+         aes(x=Class, y =logFC, size=logCPM, col=threshold)) +
+  geom_jitter(alpha=0.5) +
+  geom_point(alpha=0.7, shape=20) +
+  scale_size(range = c(1,10), name = "Mean count") +
+  scale_color_manual(values = c("#6d6875", "#CC444B")) +
+  theme_tufte() +
+  theme(legend.position="right", 
+        axis.text.x.bottom = element_text(
+          angle = 45, 
+          color="black", 
+          vjust = 0.5,    
+          hjust = 0.5),
+        axis.title.y = element_blank()) +
+    ggtitle("Prosopis vs Sporobolus")
+
+pro_vs_spo_fun_plot
+
+```
+
+
+
+##Heatmap phylum
+
+
+```{r}
+
+otu_fun <- as(otu_table(map_fun), "matrix")
+otu_fun <- as.data.frame(otu_fun)
+tax_fun <- as(tax_table(map_fun), "matrix")
+tax_fun <- as.data.frame(tax_fun)
+tax_fun$otu <- row.names(tax_fun)
+
+
+(table(tax_fun$Kingdom, useNA = "ifany"))
+
+otu_fun$otu <-row.names(otu_fun)
+
+TAXOTU_fun <- merge(tax_fun, otu_fun, by = "otu", all.x = T, all.y = F)
+
+TAXOTU_fun$Abundancia <- rowSums (TAXOTU_fun[ , 9:40])                
+
+t_taxotu_fun <- gather(TAXOTU_fun, key = "Site", value = "Abundancia", PmP1:SaP4)
+t_taxotu_fun <- t_taxotu_fun %>% filter(Abundancia != 0)
+t_taxotu_fun <- t_taxotu_fun %>% filter(Abundancia > 3)
+t_taxotu_fun$Phylum <- as.character(t_taxotu_fun$Phylum)
+t_taxotu_fun$Site <- as.character(t_taxotu_fun$Site)
+
+
+lista_colnames <- colnames(TAXOTU_fun[9:40])
+cluster <- t_taxotu_fun
+cluster$Site <- gsub("1", "", cluster$Site) 
+cluster$Site <- gsub("2", "", cluster$Site)
+cluster$Site <- gsub("3", "", cluster$Site)
+cluster$Site <- gsub("4", "", cluster$Site)
+
+cluster_fun <- cluster %>% dplyr::group_by(Phylum, Site) %>% dplyr::summarise(Abundancia = base::sum(Abundancia))
+
+cluster_fun
+cluster_fun <- as.data.frame(cluster_fun)
+cluster_fun <- spread(cluster_fun, key = "Site", value = "Abundancia")
+
+#write.csv(abun_1, file = "hongos_sitio.cvs")
+
+names_cluster <- cluster_fun$Phylum #Sacar los nombres de los phyllum
+cluster_fun <- cluster_fun[,-1] # eliminar columna de nombres
+cluster_fun <- t(cluster_fun) #transponer la data
+names_cluster <- as.character(names_cluster) #colocar como nombre de filas los phyllum que sacamos antes
+colnames(cluster_fun) <- names_cluster #ahora ver y asignar los nombres de columnas
+
+cluster_1 <- na.replace(cluster_fun, 0)
+cluster_1<-as.matrix(cluster_1) 
+cluster_1 <- decostand(cluster_1, method = "total")  
+x <- t(cluster_1)
+x <-as.data.frame(x)
+colnames(x)
+row.names(x)
+
+row.names(x) <- c("Ascomycota", "Basidiomycota",  "Chytridiomycota", "Glomeromycota")
+
+fh1 <- function(x) stats::hclust(vegdist(x, method = "bray")) #funcion para calulcar distancias en el heat map
+
+rownames(x)[is.na(rownames(x))] <- "Unknown" #por si hay NA'S
+
+filas_dend1 <-  as.dendrogram(hclust(vegdist(x, method = "bray", na.rm=TRUE))) #calcular cluster de phyllum
+#filas_dend1 <- color_branches(filas_dend1, k =3)
+plot(filas_dend1)
+#### checar
+# x <- decostand(x, "norm")
+
+columnas_dend1 <- as.dendrogram(hclust(vegdist(cluster_1, method = "bray", na.rm=TRUE))) #calcular cluster de sitios
+#columnas_dend1 <- color_branches(columnas_dend1, k =3)
+plot(columnas_dend1)
+
+
+# diss.sitios=(vegdist(cluster_1, method = "bray", na.rm=TRUE))
+# res=agnes(vegdist(cluster_1, method = "bray", na.rm=TRUE), method="ward")
+# res$ac
+# 
+# 
+# 
+# diss.phylum =(vegdist(x, method = "bray", na.rm=TRUE))
+# res.1 <- agnes(vegdist(x, method = "bray", na.rm=TRUE),method="complete")
+# res.1$ac
+
+
+col_fun = colorRamp2(c(0, .001, .1, .2, .3, .5, 1), c("#F9F9F1", "#C8F8C8","#62DD5A", "#88E07D", "#3E923B", "#21735D", "#231366"))
+small_x <- x[1:4, 1:8]
+small_x <- as.matrix(small_x)
+
+
+fungi_heatmap_phylum <- Heatmap(small_x, 
+        cluster_rows = filas_dend1, 
+        column_dend_height = unit(1, "cm"),
+        row_dend_width = unit(1, "cm"),
+        cluster_columns = columnas_dend1,
+        col = col_fun, 
+        row_dend_reorder = T ,column_dend_reorder = F,  
+        row_order = rownames(x), 
+        column_order = colnames(x), 
+        row_names_centered = TRUE, 
+        column_names_centered = TRUE, 
+        column_names_rot = 0,
+        name = "Abundance", column_title = "Sites", row_title = "Phyllum",
+        row_names_side = "right", 
+        row_dend_side = "left", 
+        column_names_side = "bottom", 
+        column_dend_side = "top",
+        heatmap_legend_param = list(col_fun = col_fun, title = "Abundance",
+             legend_width = unit(4, "cm"),
+             labels = c("0%", "50%", "100%"),
+             direction = "vertical"))
+fungi_heatmap_phylum
+
+```
+
+
+```{r}
+
+cluster_class <- cluster %>% dplyr::group_by(Class, Site) %>% dplyr::summarise(Abundancia = base::sum(Abundancia))
+#cluster_class$Abundancia_log <- -log10(cluster_class$Abundancia)
+head(cluster_class)
+cluster_class <- as.data.frame(cluster_class)
+#cluster_class$Abundancia <-NULL
+cluster_class <- spread(cluster_class, key = "Site", value = "Abundancia")
+
+#write.csv(abun_1, file = "hongos_sitio.cvs")
+
+names_cluster_class <- cluster_class$Class 
+cluster_class <- cluster_class[,-1] 
+cluster_class <- t(cluster_class) 
+names_cluster_class <- as.character(names_cluster_class)  
+colnames(cluster_class) <- names_cluster_class 
+
+cluster_2 <- na.replace(cluster_class, 0)
+cluster_2<-as.matrix(cluster_2) 
+
+cluster_2 <- decostand(cluster_2, method = "total") 
+u <- t(cluster_2)
+u <-as.data.frame(u)
+colnames(u)
+row.names(u)
+
+class.name = c(row.names(u))
+class.name = str_remove(class.name , "[c_]")
+class.name = str_remove(class.name , "[_]")
+row.names(u) = class.name
+
+
+#row.names(u) <- c("Agaricomycetes", "Arthoniomycetes", "Ascomycota_cls_Incertae_sedis", "Cystobasidiomycetes", "Dothideomycetes", "Eurotiomycetes", "Glomeromycetes", "GS13", "Lecanoromycetes", "Leotiomycetes", "Microbotryomycetes", "Orbiliomycetes", "Pezizomycetes", "Rhizophlyctidomycetes", "Sordariomycetes", "Spizellomycetes", "Tremellomycetes", "Ustilaginomycetes", "NA")    
+
+
+fh1 <- function(x) stats::hclust(vegdist(x, method = "bray")) #funcion para calulcar distancias en el heat map
+
+rownames(u)[is.na(rownames(u))] <- "Desconocido" #por si hay NA'S
+
+filas_dend2 <-  as.dendrogram(hclust(vegdist(u, method = "bray", na.rm=TRUE)), method = "ward.D2") #calcular cluster de phyllum
+#filas_dend2 <- color_branches(filas_dend2, k =3)
+plot(filas_dend2)
+
+columnas_dend2 <- as.dendrogram(hclust(vegdist(cluster_2, method = "bray", na.rm=TRUE)), method = "ward.D2") #calcular cluster de sitios
+#columnas_dend1 <- color_branches(columnas_dend1, k =3)
+plot(columnas_dend1)
+
+col_class = colorRamp2(c(0, .001, .1, .2, .3, .5, 1), c("#F9F9F1", "#C8F8C8","#62DD5A", "#88E07D", "#3E923B", "#21735D", "#231366"))
+small_u <- u[1:15, 1:32]
+small_u <- as.matrix(small_u)
+
+
+
+fungi_heatmap_class <- Heatmap(small_u, 
+        #cluster_rows = filas_dend2, 
+        column_dend_height = unit(2.5, "cm"),
+        row_dend_width = unit(1, "cm"),
+        cluster_columns = columnas_dend2,
+        col = col_fun, 
+        row_dend_reorder = T ,column_dend_reorder = T,  
+        row_order = rownames(u), 
+        column_order = colnames(u), 
+        row_names_centered = F, 
+        column_names_centered = TRUE, 
+        column_names_rot = 90,
+        name = "Abundance", column_title = "Sites", row_title = "Class",
+        row_names_side = "right", 
+        row_dend_side = "left", 
+        column_names_side = "bottom", 
+        column_dend_side = "top",
+       heatmap_legend_param = list(col_fun = col_fun, title = "Abundance",
+             legend_width = unit(4, "cm"),
+             labels = c("0%", "50%", "100%"),
+             direction = "vertical"))
+        
+        
+
+fungi_heatmap_class
+afc<-fungi_heatmap_class
+```
+
+
+#heatmap genus
+
+```{r}
+cluster_class <- cluster %>% dplyr::group_by(Genus, Site) %>% dplyr::summarise(Abundancia = base::sum(Abundancia))
+#cluster_class$Abundancia_log <- -log10(cluster_class$Abundancia)
+head(cluster_class)
+cluster_class <- as.data.frame(cluster_class)
+#cluster_class$Abundancia <-NULL
+cluster_class <- spread(cluster_class, key = "Site", value = "Abundancia")
+
+#write.csv(abun_1, file = "hongos_sitio.cvs")
+
+names_cluster_class <- cluster_class$Genus 
+cluster_class <- cluster_class[,-1] 
+cluster_class <- t(cluster_class) 
+names_cluster_class <- as.character(names_cluster_class)  
+colnames(cluster_class) <- names_cluster_class 
+
+cluster_2 <- na.replace(cluster_class, 0)
+cluster_2<-as.matrix(cluster_2) 
+cluster_2 <- decostand(cluster_2, method = "total") 
+u <- t(cluster_2)
+u <-as.data.frame(u)
+colnames(u)
+row.names(u)
+
+#row.names(u) <- c("Agaricomycetes", "Arthoniomycetes", "Ascomycota_cls_Incertae_sedis", "Cystobasidiomycetes", "Dothideomycetes", "Eurotiomycetes", "Glomeromycetes", "GS13", "Lecanoromycetes", "Leotiomycetes", "Microbotryomycetes", "Orbiliomycetes", "Pezizomycetes", "Rhizophlyctidomycetes", "Sordariomycetes", "Spizellomycetes", "Tremellomycetes", "Ustilaginomycetes", "NA")    
+
+
+fh1 <- function(x) stats::hclust(vegdist(x, method = "bray")) #funcion para calulcar distancias en el heat map
+
+rownames(u)[is.na(rownames(u))] <- "Desconocido" #por si hay NA'S
+
+filas_dend2 <-  as.dendrogram(hclust(vegdist(u, method = "bray", na.rm=TRUE)), method = "ward.D2") #calcular cluster de phyllum
+#filas_dend2 <- color_branches(filas_dend2, k =3)
+plot(filas_dend2)
+
+columnas_dend2 <- as.dendrogram(hclust(vegdist(cluster_2, method = "bray", na.rm=TRUE)), method = "ward.D2") #calcular cluster de sitios
+#columnas_dend1 <- color_branches(columnas_dend1, k =3)
+plot(columnas_dend2)
+
+col_class = colorRamp2(c(0, .001, .1, .2, .3, .5, 1), c("white", "#C8F8C8","#62DD5A", "#88E07D", "#3E923B", "#21735D", "#231366"))
+
+
+small_u <- u[1:71, 1:32]
+
+small_u <- as.matrix(small_u)
+#write.csv(small_u, file = "fungi_asv_genus.csv")
+
+ fungi_heatmap_gen <- Heatmap(small_u, 
+        column_dend_height = unit(1, "cm"),
+        cluster_columns = columnas_dend2,
+        col = col_class, 
+        row_dend_reorder = T,
+        column_dend_reorder = F,  
+        row_order = rownames(u), 
+        column_order = colnames(u),
+      #column_km = 2,
+        row_names_centered = F, 
+        row_names_gp = gpar(fontsize =8),
+        column_names_centered = F, 
+        column_names_rot = 270,
+      column_split = 2,
+        name = "Abundance", column_title = "Sites", row_title = "Class",
+        row_names_side = "left", 
+        #row_dend_side = "left", 
+        column_names_side = "bottom", 
+        column_dend_side = "top",
+       heatmap_legend_param = list(col_class = col_class, title = "Abundance",
+             legend_width = unit(4, "cm"),
+             labels = c("0%", "50%", "100%"),
+             direction = "vertical"))
+        
+        
+
+fungi_heatmap_gen
+```
+
+
+
+##NMDS
+
+```{r}
+t_otus <- otu_fun
+t_otus$otu <- NULL
+t_otus <- as.data.frame(t(t_otus))
+otus_dist = as.matrix((vegdist(t_otus, "bray")))
+
+
+nmds_fungi <- metaMDS(otus_dist)
+datos.envfit <- envfit(nmds_fungi, sample, permutations = 999)
+datos.scrs <- as.data.frame(scores(nmds_fungi, display = "sites"))
+datos.scrs <- cbind(datos.scrs, Plant = sample$Plant) #add grouping variable "Plant" to dataframe
+datos.scrs <- cbind(datos.scrs, Microhabitat = sample$Microhabitat)
+
+head(datos.scrs)
+
+
+s.scores.datos <- as.data.frame(scores(datos.envfit, display = "vectors")) #extracts relevant scores from envifit - suelo
+s.scores.datos <- cbind(s.scores.datos, s.variables = rownames(s.scores.datos)) #and then gives them their names
+s.scores.datos <- cbind(s.scores.datos, pval = datos.envfit$vectors$pvals) # add pvalues to dataframe
+sig.env.scrs <- subset(s.scores.datos, pval<=0.05) #subset data to show variables significant at 0.05
+#write.csv(sig.env.scrs, file = "fungi_vectors_envfit.cvs")
+head(s.scores.datos)
+
+nmds_fungi$stress
+
+nmds.plot.datos <- ggplot(datos.scrs, aes(x=NMDS1, y=NMDS2))+ #sets up the plot
+    geom_point(aes(NMDS1, NMDS2, 
+                   colour = factor(Plant), 
+                   shape = factor(Microhabitat)), 
+               size = 4, 
+               position=position_jitter(.1)) + 
+  scale_color_manual(values=colrs) +
+  coord_fixed() +
+  theme_few() + 
+  theme(panel.background = element_rect(colour = "black", 
+                                        size = 1, 
+                                        linetype = "solid")) +
+  labs(colour = "Plant", 
+       shape = "Microhabitat") +
+  theme(legend.position = "right", 
+        legend.text = element_text(size = 12), 
+        legend.title = element_text(size = 12), 
+        axis.text = element_text(size = 10)) +
+  stat_ellipse(aes(fill = interaction(Plant, Microhabitat), col = Plant), 
+               alpha =1, 
+               type = "t", 
+               linetype=1,
+               size = .8) 
+
+
+nmds.plot.datos
+
+ggsave(file = "nmds.plot.datos_fun.pdf", nmds.plot.datos)
+
+fungi_nmds <- nmds.plot.datos +
+  geom_segment(data = sig.env.scrs, aes(x = 0, xend=NMDS1, y=0, yend=NMDS2), arrow = arrow(length = unit(0.4, "cm")), colour = "#084594", lwd=0.70) + #add vector arrows of significant env variables
+  ggrepel::geom_text_repel(data = sig.env.scrs, aes(x=NMDS1, y=NMDS2, label = s.variables), cex = 5, direction = "both", segment.size = 0.30, color = "#084594", force = 6)
+
+fungi_nmds
+#ggsave(file = "fungi_nmds.jpeg", fungi_nmds)
+
+nmds.plot.datos_1 <- ggplot(datos.scrs, aes(x=NMDS1, y=NMDS2))+ #sets up the plot
+    geom_point(aes(NMDS1, NMDS2, colour = factor(Plant), shape = factor(Microhabitat)), size = 4, position=position_jitter(.1))+ 
+    scale_color_manual(values=colrs) +
+    coord_fixed()+
+    theme_few()+ 
+    theme(panel.background = element_rect(fill = NA, colour = "black", size = 1, linetype = "solid"))+
+    labs(colour = "Plant", shape = "Microhabitat")+ 
+    theme(legend.position = "right", legend.text = element_text(size = 12), legend.title = element_text(size = 12), axis.text = element_text(size = 10))
+
+nmds.plot.datos_1
+
+#ggsave(file = "nmds.plot.datos_1.pdf", nmds.plot.datos_1)
+
+fungi_nmds_1 <- nmds.plot.datos_1 +
+  geom_segment(data = sig.env.scrs, aes(x = 0, xend=NMDS1, y=0, yend=NMDS2), arrow = arrow(length = unit(0.3, "cm")), colour = "#2f2929", lwd=0.65) + #add vector arrows of significant env variables
+  ggrepel::geom_text_repel(data = sig.env.scrs, aes(x=NMDS1, y=NMDS2, label = s.variables), cex = 4, direction = "both", segment.size = 0.15, color = "#2f2929")
+
+fungi_nmds_1
+ggsave(file = "fungi_nmds_1.pdf", 
+fungi_nmds_1)
+
+nm <- ggplot(datos.scrs, aes(x=NMDS1, y=NMDS2, col=Plant, shape=Microhabitat))
+
+nmds_mapimi_fungi <- nm +
+  geom_point(aes(color = Plant), alpha = 0.7, size = 4) +
+  scale_color_manual(values=colrs) +
+  coord_fixed()+
+  theme_few() +
+  #geom_convexhull(alpha = 0.07, aes(fill = Plant)) +
+   stat_ellipse(linetype=1, size = 1) +
+  theme(panel.background = element_rect(fill = NA, colour = "black", size = 0.5, linetype = "solid"))+
+  theme(legend.position = "right", legend.text = element_text(size = 12), legend.title = element_text(size = 12), axis.text = element_text(size = 10))
+nmds_mapimi_fungi
+
+#ggsave(file = "nmds_mapimi_fungi.pdf", 
+nmds_mapimi_fungi)
+```
+
+##PERMANOVA
+```{r}
+set.seed(12)
+pmv <- adonis(otus_dist ~ Plant*Microhabitat, data = sample)
+pmv
+densityplot(permustats(pmv))
+
+#write.csv(pmv$aov.tab, file= "permanova_hongos.cvs")
+
+fungi_permanova_plant <- adonis_pairwise(sample, otus_dist, group.var = "Plant")
+fungi_permanova_plant
+
+fungi_permanova_plant$Adonis.tab
+fungi_permanova_plant$Betadisper.tab
+fungi_permanova_plant$Groups
+
+fungi_permanova_micro <- adonis_pairwise(sample, otus_dist, group.var = "Microhabitat")
+fungi_permanova_micro$Adonis.tab
+
+beta_dis <- fungi_permanova_micro$Betadisper.tab
+beta_dis
+
+ado_fun_plant <- adonis.pair(otus_dist, sample$Plant)
+
+
+#write.csv(ado_fun_plant, file= "permanova_ado_pair_plant.cvs")
+
+ado_fun_micro <-adonis.pair(otus_dist, sample$Microhabitat)
+
+#write.csv(ado_fun_micro , file= "permanova_ado_pair_micro.cvs")
+
+ado_fun_intera <-  adonis.pair(otus_dist, interaction(sample$Plant,sample$Microhabitat))
+
+#write.csv(ado_fun_intera, file= "permanova_ado_pair_intera.cvs")
+```
+
+##ANOSIM
+
+```{r}
+anosim = anosim(otus_dist, interaction(sample$Plant,sample$Microhabitat))
+summary(anosim)
+plot(anosim)
+```
+
+
+
+
+```{r}
+otus_dist <- as.dist(otus_dist)
+bd <- betadisper(otus_dist, interaction(sample$Plant,sample$Microhabitat))
+bd
+# also an eigenvalue based method
+
+boxplot(bd)
+
+# boxplot of Average distance to median shows also that there might be lower dispersion
+
+# F-Test
+anova(bd)
+
+# permutaion test
+permutest(bd)
+
+
+
+### ------------ SIMPER --------------------------------------------------------
+sim <- with(sample, simper(t_otus, interaction(sample$Plant,sample$Microhabitat)))
+
+sim
+
+# contr :   contribution to dissimilarity 
+# sd    :   standard deviation of contribution (is the species response consitent?)
+# ratio :   ratio between contr and sd (high ratio = high, consisten contribution)
+# av.   : average abundance per groups
+# cumsum:   cumulative contribution 
+
+
+
+
+```
+
+```{r}
+sa_pre = subset_samples(map_fun, Plant=="Lt")
+sa_pre_1 = subset_samples(sa_pre, Microhabitat=="I")
+#sa_pre_p = subset_samples(sa_pre, Microhabitat=="I")   
+
+prevelancedf = apply(X = otu_table(sa_pre_1),
+                 MARGIN = 1,
+                 FUN = function(x){sum(x > 0)})
+# Add taxonomy and total read counts to this data.frame
+prevelancedf = data.frame(Prevalence = prevelancedf,
+                      TotalAbundance = taxa_sums(sa_pre_1),
+                      tax_table(sa_pre_1))
+prevelancedf[1:10,]
+
+prevelancedf_fungi_class_sa = plyr::ddply(prevelancedf, "Phylum", function(df1){
+  data.frame(mean_prevalence=mean(df1$Prevalence),total_abundance=sum(df1$TotalAbundance,na.rm = T),stringsAsFactors = F)
+  })
+
+
+# prevelancedf_fungi_phylum = plyr::ddply(prevelancedf, "Phylum", function(df1){
+#   data.frame(mean_prevalence=mean(df1$Prevalence),total_abundance=sum(df1$TotalAbundance,na.rm = T),stringsAsFactors = F)
+#   })
+
+write.csv(prevelancedf_fungi_class_sa, file = "prevelancedf_fungi_phylum_lt_i.cvs")
+
+
+```
+
